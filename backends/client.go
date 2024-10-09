@@ -9,6 +9,7 @@ import (
 	"github.com/kelseyhightower/confd/backends/env"
 	"github.com/kelseyhightower/confd/backends/etcdv3"
 	"github.com/kelseyhightower/confd/backends/file"
+	"github.com/kelseyhightower/confd/backends/nacos"
 	"github.com/kelseyhightower/confd/backends/rancher"
 	"github.com/kelseyhightower/confd/backends/redis"
 	"github.com/kelseyhightower/confd/backends/ssm"
@@ -83,6 +84,15 @@ func New(config Config) (StoreClient, error) {
 		return dynamodb.NewDynamoDBClient(table)
 	case "ssm":
 		return ssm.New()
+	case "nacos":
+		ncfg := nacos.NacosConfig{
+			Nodes:     config.BackendNodes,
+			Namespace: config.Namespace,
+			Username:  config.Username,
+			Password:  config.Password,
+			Group:     config.Group,
+		}
+		return nacos.New(ncfg)
 	}
 	return nil, errors.New("Invalid backend")
 }

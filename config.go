@@ -67,9 +67,11 @@ func init() {
 	flag.StringVar(&config.Path, "path", "", "Vault mount path of the auth method (only used with -backend=vault)")
 	flag.StringVar(&config.Table, "table", "", "the name of the DynamoDB table (only used with -backend=dynamodb)")
 	flag.StringVar(&config.Separator, "separator", "", "the separator to replace '/' with when looking up keys in the backend, prefixed '/' will also be removed (only used with -backend=redis)")
-	flag.StringVar(&config.Username, "username", "", "the username to authenticate as (only used with vault and etcd backends)")
-	flag.StringVar(&config.Password, "password", "", "the password to authenticate with (only used with vault and etcd backends)")
+	flag.StringVar(&config.Username, "username", "", "the username to authenticate as (only used with vault, etcd and nacos backends)")
+	flag.StringVar(&config.Password, "password", "", "the password to authenticate with (only used with vault, etcd and nacos backends)")
 	flag.BoolVar(&config.Watch, "watch", false, "enable watch support")
+	flag.StringVar(&config.Namespace, "namespace", "", "the namespace to use (only used with -backend=nacos)")
+	flag.StringVar(&config.Group, "group", "", "the group to use (only used with -backend=nacos)")
 }
 
 // initConfig initializes the confd configuration by first setting defaults,
