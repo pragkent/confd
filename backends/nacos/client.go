@@ -18,6 +18,18 @@ import (
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 )
 
+const (
+	keyPrefixNaming = "/naming/"
+	keyPrefixConfig = "/config/"
+)
+
+type keySpace int
+
+const (
+	keySpaceConfig keySpace = iota
+	keySpaceNaming
+)
+
 var replacer = strings.NewReplacer("/", ".")
 
 // NacosClient provides a backend client for Nacos.
@@ -49,6 +61,8 @@ func New(config NacosConfig) (*NacosClient, error) {
 		return nil, fmt.Errorf("no nacos nodes provided")
 	}
 
+	log.Info("Nacos backend nodes: %v namespace: %s group: %s username: %s", config.Nodes, config.Namespace, group, config.Username)
+
 	clientConfig := *constant.NewClientConfig(
 		constant.WithNamespaceId(config.Namespace),
 		constant.WithUsername(config.Username),
@@ -60,15 +74,23 @@ func New(config NacosConfig) (*NacosClient, error) {
 		return nil, err
 	}
 
-	namingClient, err := clients.NewNamingClient(vo.NacosClientParam{
-		ClientConfig:  &clientConfig,
-		ServerConfigs: serverConfigs,
-	})
+	namingClient, err := clients.NewNamingClient(
+		vo.NacosClientParam{
+			ClientConfig:  &clientConfig,
+			ServerConfigs: serverConfigs,
+		})
+	if err != nil {
+		return nil, err
+	}
 
-	configClient, err := clients.NewConfigClient(vo.NacosClientParam{
-		ClientConfig:  &clientConfig,
-		ServerConfigs: serverConfigs,
-	})
+	configClient, err := clients.NewConfigClient(
+		vo.NacosClientParam{
+			ClientConfig:  &clientConfig,
+			ServerConfigs: serverConfigs,
+		})
+	if err != nil {
+		return nil, err
+	}
 
 	client := &NacosClient{
 		group: group,
@@ -76,7 +98,6 @@ func New(config NacosConfig) (*NacosClient, error) {
 		cc:    configClient,
 	}
 
-	log.Info("Nacos backend initialized. nodes: %v, namespace: %s, group: %s, username: %s", config.Nodes, config.Namespace, group, config.Username)
 	return client, nil
 }
 
@@ -86,12 +107,12 @@ func newServerConfigs(config NacosConfig) ([]constant.ServerConfig, error) {
 	for _, node := range config.Nodes {
 		host, port, err := net.SplitHostPort(node)
 		if err != nil {
-			return nil, fmt.Errorf("invalid node address: %s: %v", node, err)
+			return nil, fmt.Errorf("invalid nacos node address: %s: %v", node, err)
 		}
 
 		portNum, err := strconv.Atoi(port)
 		if err != nil {
-			return nil, fmt.Errorf("invalid node port: %s: %v", port, err)
+			return nil, fmt.Errorf("invalid nacos node port: %s: %v", port, err)
 		}
 
 		serverConfigs = append(serverConfigs, *constant.NewServerConfig(host, uint64(portNum)))
@@ -103,8 +124,8 @@ func newServerConfigs(config NacosConfig) ([]constant.ServerConfig, error) {
 func (c *NacosClient) GetValues(keys []string) (map[string]string, error) {
 	values := make(map[string]string)
 	for _, k := range keys {
-		key := getKey(k)
-		value, err := c.getValue(key)
+		space, key := parseKey(k)
+		value, err := c.getValue(space, key)
 		if err != nil {
 			return nil, err
 		}
@@ -115,21 +136,26 @@ func (c *NacosClient) GetValues(keys []string) (map[string]string, error) {
 	return values, nil
 }
 
-func getKey(key string) string {
-	key = strings.TrimPrefix(key, "/")
-	return replacer.Replace(key)
-}
+func parseKey(key string) (keySpace, string) {
+	prefix := "/"
+	space := keySpaceConfig
+	if strings.HasPrefix(key, keyPrefixNaming) {
+		prefix = keyPrefixNaming
+		space = keySpaceNaming
+	} else if strings.HasPrefix(key, keyPrefixConfig) {
+		prefix = keyPrefixConfig
+		space = keySpaceConfig
+	}
 
-func (c *NacosClient) getValue(key string) (string, error) {
-	if isNamingKey(key) {
+	key = strings.TrimPrefix(key, prefix)
+	return space, replacer.Replace(key)
+}
+func (c *NacosClient) getValue(space keySpace, key string) (string, error) {
+	if space == keySpaceNaming {
 		return c.getNaming(key)
 	}
 
 	return c.getConfig(key)
-}
-
-func isNamingKey(key string) bool {
-	return strings.HasPrefix(key, "naming.") || strings.HasPrefix(key, "nacos.naming.")
 }
 
 func (c *NacosClient) getNaming(key string) (string, error) {
@@ -139,11 +165,11 @@ func (c *NacosClient) getNaming(key string) (string, error) {
 		HealthyOnly: true,
 	})
 	if err != nil {
-		log.Error("NamingClient.SelectInstances error. key: %v err: %v", key, err)
+		log.Error("Select instances error. key: %v err: %v", key, err)
 		return "", err
 	}
 
-	log.Info("NamingClient.SelectInstances finished. key: %v, instances: %+v", key, instances)
+	log.Info("Select instances finished. key: %v instances: %+v", key, instances)
 
 	if len(instances) == 0 {
 		return "", errors.New("no instances available")
@@ -166,7 +192,7 @@ func (c *NacosClient) getNaming(key string) (string, error) {
 
 	data, err := json.Marshal(service)
 	if err != nil {
-		log.Error("json.Marshal error. key: %v val: %v err: %v", key, instances, err)
+		log.Error("Marshal json error. key: %v val: %v err: %v", key, instances, err)
 		return "", err
 	}
 
@@ -179,11 +205,11 @@ func (c *NacosClient) getConfig(key string) (string, error) {
 		Group:  c.group,
 	})
 	if err != nil {
-		log.Error("ConfigClient.GetConfig error. key: %v err: %v", key, err)
+		log.Error("Get config error. key: %v err: %v", key, err)
 		return "", err
 	}
 
-	log.Info("ConfigClient.GetConfig finished. key: %v, value: %v", key, data)
+	log.Info("Get config finished. key: %v, value: %v", key, data)
 	return data, nil
 }
 
@@ -213,15 +239,8 @@ func (c *NacosClient) watch(keys []string, waitIndex uint64) error {
 	respChan := make(chan watchResponse, 1)
 
 	for _, k := range keys {
-		key := getKey(k)
-		var err error
-		if isNamingKey(key) {
-			err = c.watchNaming(key, respChan)
-		} else {
-			err = c.watchConfig(key, respChan)
-		}
-
-		if err != nil {
+		space, key := parseKey(k)
+		if err := c.watchKey(space, key, respChan); err != nil {
 			return err
 		}
 	}
@@ -235,12 +254,20 @@ func (c *NacosClient) watch(keys []string, waitIndex uint64) error {
 	return nil
 }
 
+func (c *NacosClient) watchKey(space keySpace, key string, respChan chan watchResponse) error {
+	if space == keySpaceNaming {
+		return c.watchNaming(key, respChan)
+	}
+
+	return c.watchConfig(key, respChan)
+}
+
 func (c *NacosClient) watchNaming(key string, respChan chan watchResponse) error {
 	param := &vo.SubscribeParam{
 		ServiceName: key,
 		GroupName:   c.group,
 		SubscribeCallback: func(services []model.Instance, err error) {
-			log.Info("SubscribeCallback called. group: %v key: %v, services: %v, err: %v", c.group, key, services, err)
+			log.Info("Naming change occurred. group: %v key: %v services: %+v err: %v", c.group, key, services, err)
 
 			if err != nil {
 				respChan <- watchResponse{err: err}
@@ -253,11 +280,11 @@ func (c *NacosClient) watchNaming(key string, respChan chan watchResponse) error
 
 	err := c.nc.Subscribe(param)
 	if err != nil {
-		log.Error("NamingClient.Subscribe error. group: %v key: %v err: %v", c.group, key, err)
+		log.Error("Subscribe naming change event error. group: %v key: %v err: %v", c.group, key, err)
 		return err
 	}
 
-	log.Info("NamingClient.Subscribe finished. group: %v key: %v", c.group, key)
+	log.Info("Subscribe naming change event finished. group: %v key: %v", c.group, key)
 	return nil
 }
 
@@ -266,18 +293,18 @@ func (c *NacosClient) watchConfig(key string, respChan chan watchResponse) error
 		DataId: key,
 		Group:  c.group,
 		OnChange: func(namespace, group, dataId, data string) {
-			log.Info("ListenConfig.OnChange called. namespace: %v group: %v key: %v data: %v", namespace, c.group, key, data)
+			log.Info("Config change occurred. namespace: %v group: %v key: %v data: %v", namespace, c.group, key, data)
 			respChan <- watchResponse{waitIndex: 1, err: nil}
 		},
 	}
 
 	err := c.cc.ListenConfig(param)
 	if err != nil {
-		log.Error("ConfigClient.ListenConfig error. group: %v key: %v err: %v", c.group, key, err)
+		log.Error("Listen config change event error. group: %v key: %v err: %v", c.group, key, err)
 		return err
 	}
 
-	log.Info("ConfigClient.ListenConfig finished. group: %v key: %v", c.group, key)
+	log.Info("Listen config change event finished. group: %v key: %v", c.group, key)
 	return nil
 }
 
